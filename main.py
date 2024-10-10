@@ -11,12 +11,20 @@ from huggingface_model_utils import load_model_by_repo_id
 # Flask app
 app = Flask(__name__)
 
-# Cấu hình model
+app.secret_key = os.urandom(24)  # Tạo một secret key ngẫu nhiên
+
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 aligner = load_model_by_repo_id('minchul/cvlface_DFA_mobilenet', os.path.expanduser('~/.cvlface_cache/minchul/cvlface_DFA_mobilenet'), os.environ['HF_TOKEN']).to(device)
-fr_model = load_model_by_repo_id('minchul/cvlface_adaface_vit_base_kprpe_webface4m', os.path.expanduser('~/.cvlface_cache/minchul/cvlface_adaface_vit_base_webface4m'), os.environ['HF_TOKEN']).to(device)
+fr_model = load_model_by_repo_id('minchul/cvlface_adaface_vit_base_webface4m', os.path.expanduser('~/.cvlface_cache/minchul/cvlface_adaface_vit_base_webface4m'), os.environ['HF_TOKEN']).to(device)
+#fr_model = load_model_from_pt("/home/quoc14/Code/CVLface-main/cvlface/pretrained_models/recognition/model .pt", device)
 
 database_path = './face_db.csv'
+def reset_csv(database_path):
+    # Tạo một DataFrame rỗng với các cột tiêu đề
+    columns = ['id', 'feat']
+    df = pd.DataFrame(columns=columns)
+    df.to_csv(database_path, index=False)
 
 # Hàm chuẩn hóa ảnh và căn chỉnh
 def pil_to_input(pil_image, device):
@@ -84,18 +92,25 @@ def get_id(input_image_or_feat, database_path, aligner, fr_model, device, thresh
 
 # Lưu feature mới vào CSDL
 def save_to_db(feat, database_path):
-    if not os.path.exists(database_path):
-        db = pd.DataFrame(columns=['id', 'feat'])
+    # Kiểm tra nếu file CSV không tồn tại hoặc trống
+    if not os.path.exists(database_path) or os.stat(database_path).st_size == 0:
+        # Nếu không tồn tại hoặc trống, bắt đầu ID từ 1
         next_id = 1
+        db = pd.DataFrame(columns=['id', 'feat'])
     else:
         db = pd.read_csv(database_path)
-        next_id = db['id'].max() + 1
-    
+        # Đảm bảo rằng cột 'id' không bị lỗi và có thể chuyển thành số
+        if pd.to_numeric(db['id'], errors='coerce').isna().all():
+            next_id = 1  # Bắt đầu lại nếu tất cả giá trị trong 'id' là NaN
+        else:
+            next_id = db['id'].max() + 1  # Tính ID kế tiếp
+
     new_row = pd.DataFrame({'id': [next_id], 'feat': [feat.squeeze().cpu().detach().numpy().tolist()]})
     db = pd.concat([db, new_row], ignore_index=True)
     db.to_csv(database_path, index=False)
     
     return next_id
+
 
 # Giao diện chính
 @app.route('/')
@@ -105,10 +120,14 @@ def index():
 @app.route('/register', methods=['POST'])
 def register():
     if 'file' not in request.files:
-        return redirect(request.url)
+        flash('No file part')
+        return render_template('index.html')
+    
     file = request.files['file']
     if file.filename == '':
-        return redirect(request.url)
+        flash('No selected file')
+        return render_template('index.html')
+    
     if file:
         pil_image = Image.open(file)
         input_tensor = pil_to_input(pil_image, device)
@@ -120,18 +139,24 @@ def register():
         current_id = get_id(feat, database_path, aligner, fr_model, device)
         if current_id is None:
             new_id = save_to_db(feat, database_path)
-            return redirect(url_for('index', message=f'Đăng ký thành công với ID: {new_id}'))
+            flash(f'Đăng ký thành công với ID: {new_id}')
         else:
-            return redirect(url_for('index', message=f'Khuôn mặt đã tồn tại với ID: {current_id}'))
-    return redirect(request.url)
+            flash(f'Khuôn mặt đã tồn tại với ID: {current_id}')
+        
+    return render_template('index.html')
+
 
 @app.route('/recognize', methods=['POST'])
 def recognize():
     if 'file' not in request.files:
-        return redirect(request.url)
+        flash('No file part')
+        return render_template('index.html')
+    
     file = request.files['file']
     if file.filename == '':
-        return redirect(request.url)
+        flash('No selected file')
+        return render_template('index.html')
+    
     if file:
         pil_image = Image.open(file)
         input_tensor = pil_to_input(pil_image, device)
@@ -143,11 +168,14 @@ def recognize():
         id = get_id(feat, database_path, aligner, fr_model, device)
 
         if id is None:
-            return redirect(url_for('index', message='Khuôn mặt chưa được đăng ký!'))
+            flash('Khuôn mặt chưa được đăng ký!')
         else:
-            return redirect(url_for('index', message=f'Khuôn mặt đã được nhận diện với ID: {id}'))
-    return redirect(request.url)
+            flash(f'Khuôn mặt đã được nhận diện với ID: {id}')
+    
+    return render_template('index.html')
 
 
 if __name__ == '__main__':
+    reset_csv(database_path)  # Reset CSV mỗi lần chạy ứng dụng
+
     app.run(debug=True)

@@ -9,11 +9,15 @@
     <h1>Hệ thống nhận diện khuôn mặt</h1>
 
     <!-- Hiển thị thông báo nếu có -->
-    {% if message %}
-        <div style="color: green; font-weight: bold;">
-            {{ message }}
-        </div>
-    {% endif %}
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div style="color: green; font-weight: bold;">
+                {% for message in messages %}
+                    <p>{{ message }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
 
     <!-- Đăng ký khuôn mặt -->
     <h2>Đăng ký khuôn mặt</h2>
